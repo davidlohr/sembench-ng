@@ -28,8 +28,9 @@
 #include <sys/time.h>
 #include <sys/syscall.h>
 #include <errno.h>
+#include <math.h>
 
-#define VERSION "0.2"
+#define VERSION "0.3"
 
 /* futexes have been around since 2.5.something, but it still seems I
  * need to make my own syscall.  Sigh.
@@ -84,10 +85,55 @@ struct sem_operations {
 
 int *semid_lookup = NULL;
 
+struct stats
+{
+	double n, mean, M2;
+};
+
+static void update_stats(struct stats *stats, long long val)
+{
+	double delta;
+
+	stats->n++;
+	delta = val - stats->mean;
+	stats->mean += delta / stats->n;
+	stats->M2 += delta*(val - stats->mean);
+}
+
+static double avg_stats(struct stats *stats)
+{
+	return stats->mean;
+}
+
+/*
+ * http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+ *
+ *       (\Sum n_i^2) - ((\Sum n_i)^2)/n
+ * s^2 = -------------------------------
+ *                  n - 1
+ *
+ * http://en.wikipedia.org/wiki/Stddev
+ *
+ * The std dev of the mean is related to the std dev by:
+ *
+ *             s
+ * s_mean = -------
+ *          sqrt(n)
+ *
+ */
+static double stddev_stats(struct stats *stats)
+{
+	double variance = stats->M2 / (stats->n - 1);
+	double variance_mean = variance / stats->n;
+
+	return sqrt(variance_mean);
+}
+
 pthread_mutex_t worklist_mutex = PTHREAD_MUTEX_INITIALIZER;
 static unsigned long total_burns = 0;
 static unsigned long min_burns = ~0UL;
 static unsigned long max_burns = 0;
+static struct stats burn_stats;
 
 /* currently running threads */
 static int thread_count = 0;
@@ -387,6 +433,7 @@ void *worker(void *arg)
 		min_burns = burn_count;
 	if (burn_count > max_burns)
 		max_burns = burn_count;
+	update_stats(&burn_stats, burn_count);
 	thread_count--;
 	pthread_mutex_unlock(&worklist_mutex);
 	return (void *)0;
@@ -544,8 +591,11 @@ int main(int ac, char **av) {
 	printf("%d threads, waking %d at a time\n", num_threads, wake_num);
 	printf("using %s\n", ops->name);
 	printf("main thread burns: %d\n", burn_count);
-	printf("worker burn count total %lu min %lu max %lu avg %lu\n",
-	       total_burns, min_burns, max_burns, total_burns / num_threads);
+
+	printf("worker burn count total %lu min %lu max %lu avg %.3f +- %.3f%%\n",
+	       total_burns, min_burns, max_burns, avg_stats(&burn_stats),
+	       100 * stddev_stats(&burn_stats) / avg_stats(&burn_stats));
+
 	printf("run time %d seconds %lu worker burns per second\n",
 		(int)(now.tv_sec - start.tv_sec),
 		total_burns / (now.tv_sec - start.tv_sec));
