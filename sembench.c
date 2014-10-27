@@ -574,7 +574,6 @@ int main(int ac, char **av) {
 		usleep(200);
 	}
 	gettimeofday(&start, NULL);
-	fprintf(stderr, "main loop going\n");
 	while(1) {
 		ops->wake(wi, num_semids, wake_num);
 		burn_count++;
