@@ -581,7 +581,7 @@ int main(int ac, char **av) {
 		if (now.tv_sec - start.tv_sec >= run_secs)
 			break;
 	}
-	fprintf(stderr, "all done\n");
+
 	all_done = 1;
 	while(thread_count > 0) {
 		ops->wake(wi, num_semids, wake_num);
