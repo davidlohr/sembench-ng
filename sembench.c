@@ -29,23 +29,31 @@
 #include <sys/syscall.h>
 #include <errno.h>
 #include <math.h>
+#include <linux/futex.h>
 
 #define VERSION "0.3"
 
-/* futexes have been around since 2.5.something, but it still seems I
- * need to make my own syscall.  Sigh.
+#define futex(uaddr, op, val, timeout, uaddr2, val3, opflags) \
+	syscall(SYS_futex, uaddr, op | opflags, val, timeout, uaddr2, val3)
+
+/**
+ * futex_wait() - block on uaddr with optional timeout
+ * @timeout:	relative timeout
  */
-#define FUTEX_WAIT              0
-#define FUTEX_WAKE              1
-#define FUTEX_FD                2
-#define FUTEX_REQUEUE           3
-#define FUTEX_CMP_REQUEUE       4
-#define FUTEX_WAKE_OP           5
-static inline int futex (int *uaddr, int op, int val,
-			 const struct timespec *timeout,
-			 int *uaddr2, int val3)
+static inline int
+futex_wait(u_int32_t *uaddr, u_int32_t val, struct timespec *timeout, int opflags)
 {
-	return syscall(__NR_futex, uaddr, op, val, timeout, uaddr2, val3);
+	return futex(uaddr, FUTEX_WAIT, val, timeout, NULL, 0, opflags);
+}
+
+/**
+ * futex_wake() - wake one or more tasks blocked on uaddr
+ * @nr_wake:	wake up to this many tasks
+ */
+static inline int
+futex_wake(u_int32_t *uaddr, int nr_wake, int opflags)
+{
+	return futex(uaddr, FUTEX_WAKE, nr_wake, NULL, NULL, 0, opflags);
 }
 
 static void smp_mb(void)
@@ -299,8 +307,8 @@ void wait_futex_sem(struct lockinfo *l)
 	l->data = 1;
 	worklist_add(l);
 	while(l->data == 1) {
-		ret = futex(&l->data, FUTEX_WAIT, 1, NULL, NULL, 0);
-		if (ret && ret != EWOULDBLOCK) {
+		ret = futex_wait(&l->data, 1, NULL, 0);
+		if (ret && ret == EWOULDBLOCK) {
 			perror("futex wait");
 			exit(1);
 		}
@@ -322,7 +330,7 @@ int futex_wake_some(struct sem_wakeup_info *wi, int num_semids, int num)
 			fprintf(stderr, "warning, lockinfo data was %d\n",
 				l->data);
 		l->data = 0;
-		ret = futex(&l->data, FUTEX_WAKE, 1, NULL, NULL, 0);
+		ret = futex_wake(&l->data, 1, 0);
 		if (ret < 0) {
 			perror("futex wake");
 			exit(1);
